@@ -73,6 +73,8 @@ If you are reading on GitHub, the same content is in
 
 ## Credits
 
+This plugin started out as an improvement to the code included in [this post](https://www.reddit.com/r/neovim/comments/1iykmqc/improving_kubernetes_yaml_support_in_neovim_crds/)
+
 Schemas come from two excellent community projects:
 
 - [datreeio/CRDs-catalog](https://github.com/datreeio/CRDs-catalog)
