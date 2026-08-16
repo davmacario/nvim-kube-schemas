@@ -194,4 +194,50 @@ M.mark_negative = function(key)
 	M.save_meta()
 end
 
+---Count the files currently held in the cache, recursively.
+---Returns 0 if the cache directory does not exist.
+---@return integer
+M.count_files = function()
+	if not vim.uv.fs_stat(M.cache_root) then
+		return 0
+	end
+	local count = 0
+	for _, entry_type in vim.fs.dir(M.cache_root, { depth = math.huge }) do
+		if entry_type == "file" then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+---Delete the whole cache, both on disk and in memory.
+---Refuses to run if `M.cache_root` points somewhere suspicious: it is
+---user-configurable and this is a recursive delete.
+---Idempotent - clearing an already empty cache succeeds.
+---@return boolean ok
+---@return string? err
+M.clear = function()
+	local root = type(M.cache_root) == "string" and vim.fs.normalize(M.cache_root)
+		or nil
+	if not root or root == "" or root == "/" or root == vim.fs.normalize("~") then
+		return false, "refusing to delete unsafe cache_root: " .. tostring(M.cache_root)
+	end
+
+	if vim.uv.fs_stat(root) then
+		-- NOTE: vim.fn.delete returns 0 on success and -1 on failure. Compare
+		-- explicitly, since 0 is truthy in Lua
+		if vim.fn.delete(root, "rf") == -1 then
+			return false, "failed to delete " .. root
+		end
+		-- Recreate it so that cache_root stays a valid target
+		vim.fn.mkdir(root, "p")
+	end
+
+	-- Drop the memoized trees/meta, otherwise the rest of the session keeps
+	-- serving state that no longer exists on disk
+	M.cache = {}
+
+	return true, nil
+end
+
 return M
