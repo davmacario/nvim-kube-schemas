@@ -116,7 +116,6 @@ M.setup = function(opts)
 	if M.setup_called then
 		return
 	end
-	M.setup_called = true
 
 	if vim.fn.has("nvim-0.11") == 0 then
 		vim.notify("This plugin requires Neovim >= 0.11", vim.log.levels.ERROR)
@@ -142,7 +141,11 @@ M.setup = function(opts)
 		return
 	end
 
-	if config.augroup and type(config.augroup) ~= "string" and type(config.augroup) ~= "number" then
+	if
+			config.augroup
+			and type(config.augroup) ~= "string"
+			and type(config.augroup) ~= "number"
+	then
 		vim.notify(
 			"nvim-kube-schemas: 'augroup' must be string or integer",
 			vim.log.levels.ERROR
@@ -150,6 +153,8 @@ M.setup = function(opts)
 		return
 	end
 	-- TODO: check type of config.pattern
+
+	M.setup_called = true
 
 	cache_mgmt.cache_root = config.cache_root
 

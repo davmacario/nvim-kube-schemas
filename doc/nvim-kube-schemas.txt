@@ -1,0 +1,350 @@
+*nvim-kube-schemas.txt*	YAML schemas for Kubernetes resources, for yamlls
+
+Author:  Davide Macario
+License: MIT
+Version: v1.0.2
+
+==============================================================================
+CONTENTS                                          *nvim-kube-schemas-contents*
+
+  1. Introduction ................. |nvim-kube-schemas-introduction|
+  2. Requirements ................. |nvim-kube-schemas-requirements|
+  3. Installation ................. |nvim-kube-schemas-installation|
+  4. Setup ........................ |nvim-kube-schemas-setup|
+  5. Configuration ................ |nvim-kube-schemas-config|
+  6. Usage ........................ |nvim-kube-schemas-usage|
+  7. Commands ..................... |nvim-kube-schemas-commands|
+  8. API .......................... |nvim-kube-schemas-api|
+  9. How it works ................. |nvim-kube-schemas-internals|
+ 10. Credits and license .......... |nvim-kube-schemas-credits|
+
+==============================================================================
+1. INTRODUCTION                               *nvim-kube-schemas-introduction*
+
+                                                           *nvim-kube-schemas*
+nvim-kube-schemas automatically fetches and applies YAML schemas for
+Kubernetes resources, so that yaml-language-server can offer completion,
+hover documentation and validation on your manifests.
+
+It detects the `apiVersion` and `kind` of the manifest you are editing and
+attaches the matching JSON schema to the `yamlls` client. There is no manual
+`yaml.schemas` wiring to maintain.
+
+Schemas are resolved from two community catalogs:
+
+  - Custom Resource Definitions from the datreeio/CRDs-catalog repository,
+    covering hundreds of operators (Argo CD, Cert-Manager, Prometheus,
+    Traefik, and more).
+  - Built-in Kubernetes resources from the yannh/kubernetes-json-schema
+    repository, used as a fallback when no CRD matches.
+
+Every schema is cached on disk, so after the first fetch, completion and
+validation keep working offline. Misses are remembered too, so an unknown
+resource is not re-requested for every buffer you open.
+
+==============================================================================
+2. REQUIREMENTS                               *nvim-kube-schemas-requirements*
+
+  - Neovim >= 0.11.
+    |nvim-kube-schemas.setup()| checks this and aborts with an error message
+    on older versions.
+
+  - plenary.nvim (https://github.com/nvim-lua/plenary.nvim).
+
+  - yaml-language-server, running and attached to the buffer, from
+    https://github.com/redhat-developer/yaml-language-server
+    The LSP client must be named exactly `yamlls`, which is the default for
+    |vim.lsp.config()| and for nvim-lspconfig. On buffers without such a
+    client the plugin does nothing.
+
+  - `curl`, available on your `$PATH`.
+
+  - Network access to `api.github.com` and `raw.githubusercontent.com`, for
+    the first fetch of each schema.
+
+==============================================================================
+3. INSTALLATION                               *nvim-kube-schemas-installation*
+
+With lazy.nvim (https://github.com/folke/lazy.nvim): >lua
+
+    return {
+        "davmacario/nvim-kube-schemas",
+        dependencies = { "nvim-lua/plenary.nvim" },
+        opts = {
+            -- User config
+        },
+    }
+<
+With packer.nvim (https://github.com/wbthomason/packer.nvim): >lua
+
+    use({
+        "davmacario/nvim-kube-schemas",
+        requires = { "nvim-lua/plenary.nvim" },
+        config = function()
+            require("nvim-kube-schemas").setup({
+                -- User config
+            })
+        end,
+    })
+<
+==============================================================================
+4. SETUP                                             *nvim-kube-schemas-setup*
+
+|nvim-kube-schemas.setup()| has to run for the plugin to do anything. The
+file in `plugin/` is only a load guard; it registers no commands and no
+autocommands of its own.
+
+lazy.nvim calls `setup()` for you as soon as `opts` is present in the plugin
+spec, even when `opts` is an empty table. With other plugin managers, call it
+yourself: >lua
+
+    require("nvim-kube-schemas").setup()
+<
+Once `setup()` has completed successfully, further calls are a no-op: the
+configuration cannot be changed afterwards. A call that aborts on a bad option
+does not count, so you can correct the option and call `setup()` again.
+
+                                                 *g:loaded_nvim_kube_schemas*
+Set by the plugin file the first time the plugin is sourced, to prevent it
+being loaded twice. Setting it to a truthy value in your configuration before
+the plugin loads prevents the plugin from being sourced at all.
+
+Note that this is separate from the `enabled` option: `enabled` still lets you
+call `setup()` and keeps |:NvimKubeSchemasClearCache| available, whereas this
+variable stops the plugin from loading in the first place.
+
+==============================================================================
+5. CONFIGURATION                                    *nvim-kube-schemas-config*
+
+Pass any subset of the options below to `setup()`. These are the defaults:
+>lua
+
+    require("nvim-kube-schemas").setup({
+        enabled = true,
+        cache_root = vim.fs.joinpath(vim.fn.stdpath("data"), "yaml-schemas"),
+        augroup = nil,
+        pattern = { "*.yaml", "*.yml" },
+    })
+<
+Your options are merged shallowly over the defaults, so a table-valued option
+such as `pattern` is replaced wholesale rather than extended.
+
+                                            *nvim-kube-schemas-config-enabled*
+enabled ~
+    Type: `boolean`, default: `true`
+
+    Set to `false` to disable the plugin. The autocommand is not created, so
+    no schema is ever resolved or attached.
+
+    |:NvimKubeSchemasClearCache| is still registered when disabled, since
+    reclaiming the disk space is exactly what you are likely to want after
+    turning the plugin off.
+
+                                         *nvim-kube-schemas-config-cache_root*
+cache_root ~
+    Type: `string`
+    Default: `vim.fs.joinpath(vim.fn.stdpath("data"), "yaml-schemas")`
+
+    Directory where schemas are cached. See |nvim-kube-schemas-cache| for the
+    layout.
+
+    The directory is created recursively during `setup()`. If it cannot be
+    created, `setup()` reports an error and aborts without activating the
+    plugin.
+
+                                            *nvim-kube-schemas-config-pattern*
+pattern ~
+    Type: `string[]`, default: `{ "*.yaml", "*.yml" }`
+
+    Autocommand pattern, in the sense of |autocmd-pattern|. It should match
+    the files where `yamlls` is active. Extend it if you edit manifests under
+    other extensions: >lua
+
+        pattern = { "*.yaml", "*.yml", "*.k8s" }
+<
+                                            *nvim-kube-schemas-config-augroup*
+augroup ~
+    Type: `string`, `integer` or `nil`, default: `nil`
+
+    The autocommand group that owns the plugin's autocommand.
+
+        `nil`       Creates a group named `NvimKubeSchemas`, clearing it
+                    first, so reloading your configuration does not stack
+                    duplicate autocommands.
+        `string`    Creates a group with that name without clearing it, so
+                    autocommands you registered in the same group survive.
+        `integer`   Used directly as an existing group id, as returned by
+                    |nvim_create_augroup()|.
+
+The values of `enabled`, `cache_root` and `augroup` are type-checked during
+`setup()`; a mismatch is reported with an error message and aborts setup.
+`pattern` is currently not validated.
+
+==============================================================================
+6. USAGE                                             *nvim-kube-schemas-usage*
+
+There is nothing to invoke. Open a Kubernetes manifest in a buffer where
+`yamlls` is attached, and the plugin resolves and attaches the schema in the
+background.
+
+On success it reports the schema it picked: >text
+
+    Attached schema: Kubernetes schema for Deployment
+    Attached schema: CRD schema for argoproj.io/application_v1alpha1.json
+<
+If the buffer has no top-level `apiVersion` and `kind`, or if no schema exists
+for the resource, the plugin reports this once and leaves `yamlls` on its
+default configuration: >text
+
+No CRD or Kubernetes schema found. Falling back to default LSP configuration.
+<
+Each buffer is inspected only once per session.
+
+BUFFER VARIABLES                          *nvim-kube-schemas-buffer-variables*
+
+The per-buffer state is tracked in three buffer-local variables. They are set
+by the plugin; you should not need to set them yourself, but they are useful
+when diagnosing why a buffer did or did not get a schema.
+
+                                                          *b:schema_attached*
+    Set to `true` once a schema has been successfully attached to the buffer.
+
+                                                           *b:schema_pending*
+    Set to `true` while resolution is in flight, and to `false` when it
+    finishes. Prevents the same buffer being processed concurrently by
+    repeated |BufEnter| events.
+
+                                                           *b:schema_checked*
+    Set to `true` when the buffer was inspected but had no usable top-level
+    `apiVersion` and `kind`. Prevents re-reporting the same miss.
+
+Resolution is skipped entirely while any of the three is set. Clearing the
+cache with |:NvimKubeSchemasClearCache| resets all three across every open
+buffer, so buffers re-fetch their schema on the next |BufEnter|.
+
+==============================================================================
+7. COMMANDS                                       *nvim-kube-schemas-commands*
+
+                                                 *:NvimKubeSchemasClearCache*
+:NvimKubeSchemasClearCache
+    Delete every cached schema from |nvim-kube-schemas-config-cache_root|.
+
+    Asks for confirmation first, defaulting to "No", since this is a
+    recursive delete. The prompt reports how many files would be removed.
+
+:NvimKubeSchemasClearCache!
+    The same, without the confirmation prompt.
+
+Clearing the cache also resets the per-buffer state described in
+|nvim-kube-schemas-buffer-variables| and cancels any active offline backoff,
+so open buffers re-fetch their schema on the next |BufEnter|.
+
+Entries already registered in the `yaml.schemas` map of the running `yamlls`
+client are deliberately left in place. They are re-added on the next attach,
+and yaml-language-server tolerates a schema path that no longer resolves.
+
+The command is registered even when the plugin is disabled through the
+`enabled` option.
+
+==============================================================================
+8. API                                                 *nvim-kube-schemas-api*
+
+>lua
+    local kube_schemas = require("nvim-kube-schemas")
+<
+                                                  *nvim-kube-schemas.setup()*
+setup({opts}) ~
+    Configure and start the plugin. See |nvim-kube-schemas-setup| and
+    |nvim-kube-schemas-config|.
+
+    Parameters: ~
+      • {opts}  (`table?`) Options to merge over the defaults.
+
+    Once a call has succeeded, further calls are a no-op.
+
+                                            *nvim-kube-schemas.clear_cache()*
+clear_cache({opts}) ~
+    Delete every cached schema and reset the per-buffer state, as
+    |:NvimKubeSchemasClearCache| does.
+
+    Parameters: ~
+      • {opts}  (`table?`) Optional keys:
+                • {force} (`boolean?`) Skip the confirmation prompt.
+
+    Example: >lua
+
+        require("nvim-kube-schemas").clear_cache({ force = true })
+<
+                                             *nvim-kube-schemas.get_config()*
+get_config() ~
+    Return the current configuration table, with your options already merged
+    over the defaults.
+
+    Return: ~
+        (`table`) The active configuration.
+
+==============================================================================
+9. HOW IT WORKS                                  *nvim-kube-schemas-internals*
+
+  1. An autocommand on |LspAttach| and |BufEnter| fires for every file
+     matching |nvim-kube-schemas-config-pattern|, and proceeds only if a
+     client named `yamlls` is attached to the buffer.
+
+  2. The buffer is scanned for top-level `apiVersion:` and `kind:` keys.
+
+  3. The CRD catalog is tried first. The `apiVersion` and `kind` are
+     normalized into a `<group>/<kind>_<version>.json` path, for example
+     `argoproj.io/application_v1alpha1.json`, and looked up against a cached
+     listing of the catalog's git tree.
+
+  4. If no CRD matches, the built-in Kubernetes schemas are tried, first as
+     `<kind>-<version>.json` and then as `<kind>.json`.
+
+  5. The schema is downloaded into the cache, and its local path is
+     registered in the `yaml.schemas` map of the running `yamlls` client,
+     which is then notified with `workspace/didChangeConfiguration`. Schemas
+     are always served to the language server from disk, never from a URL.
+
+All network work happens on a coroutine, so the editor is never blocked.
+
+The upstream sources are the `main` branch of datreeio/CRDs-catalog and the
+`master/` directory of the `master` branch of yannh/kubernetes-json-schema.
+
+CACHE LAYOUT                                         *nvim-kube-schemas-cache*
+>text
+    <cache_root>/
+    ├── crds/<group>/<kind>_<version>.json  # CRD schemas
+    ├── k8s/<kind>-<version>.json           # built-in Kubernetes schemas
+    ├── crd-tree.json                       # CRD catalog listing
+    └── meta.json                           # record of known misses
+<
+`crd-tree.json` is refreshed once a day. `meta.json` records resources that
+were looked up and not found, and its entries are kept for seven days, so an
+unknown resource does not trigger a request for every buffer you open.
+
+Writes are atomic: each file is written under a temporary name and then
+renamed into place, so an interrupted download cannot leave a truncated schema
+in the cache.
+
+NETWORK BEHAVIOUR                                  *nvim-kube-schemas-network*
+
+Requests time out after 4 seconds. After any failed request, all network
+access is skipped for 60 seconds, so a flaky or absent connection does not add
+latency to every buffer you open. |:NvimKubeSchemasClearCache| cancels an
+active backoff.
+
+==============================================================================
+10. CREDITS AND LICENSE                            *nvim-kube-schemas-credits*
+
+Schemas come from two community projects:
+
+  - datreeio/CRDs-catalog
+    https://github.com/datreeio/CRDs-catalog
+  - yannh/kubernetes-json-schema
+    https://github.com/yannh/kubernetes-json-schema
+
+                                                   *nvim-kube-schemas-license*
+nvim-kube-schemas is distributed under the MIT license.
+Copyright (c) 2026 Davide Macario.
+
+vim:tw=78:ts=8:noet:ft=help:norl:
