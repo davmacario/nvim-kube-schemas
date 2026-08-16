@@ -80,6 +80,7 @@ M.clear_cache = function(opts)
 		if vim.api.nvim_buf_is_valid(bufnr) then
 			vim.b[bufnr].schema_attached = nil
 			vim.b[bufnr].schema_pending = nil
+			vim.b[bufnr].schema_checked = nil
 		end
 	end
 

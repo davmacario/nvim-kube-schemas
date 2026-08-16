@@ -123,7 +123,8 @@ M.setup_buffer = async.void(function(bufnr)
 					)
 				end
 			else
-				-- Fall back to the default LSP configuration
+				-- Mark buffer to prevent it firing again
+				vim.b[bufnr].schema_checked = true
 				vim.notify(
 					"No CRD or Kubernetes schema found. Falling back to default LSP configuration.",
 					vim.log.levels.INFO
@@ -144,8 +145,13 @@ end)
 ---Fetch YAML schema and attach it to the buffer, if yamlls is running.
 ---@param bufnr integer
 M.init = function(bufnr)
-	-- Check if the schema has already been attached to this buffer
-	if vim.b[bufnr].schema_attached or vim.b[bufnr].schema_pending then
+	-- Check if the buffer has already been attached a schema, or resolved to
+	-- "nothing to attach"
+	if
+		vim.b[bufnr].schema_attached
+		or vim.b[bufnr].schema_pending
+		or vim.b[bufnr].schema_checked
+	then
 		return
 	end
 	-- Mark the schema as attached; NOTE: this prevents retrying if any of the
