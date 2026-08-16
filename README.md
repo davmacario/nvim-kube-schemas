@@ -14,6 +14,11 @@ Neovim plugin to automatically fetch and use YAML schemas for Kubernetes resourc
 - Caches every schema on disk, so after the first fetch completion and validation work offline.
 - Remembers misses too, so unknown resources are not re-requested on every buffer.
 
+Future improvements:
+
+- Add support for multi-doc YAMLs (i.e., containing multiple resources separated by `---`)
+- Refactor CRD and K8s resource logic to expose the same API. This allows to easily extend the plugin for extra sources.
+
 ## Installation
 
 Requires Neovim >= 0.11, [plenary.nvim](https://github.com/nvim-lua/plenary.nvim), and
@@ -53,7 +58,7 @@ use({
 ## Documentation
 
 The full documentation lives in the help file, which is the single source of truth for
-this plugin's behaviour:
+this plugin's behavior:
 
 ```vim
 :help nvim-kube-schemas
