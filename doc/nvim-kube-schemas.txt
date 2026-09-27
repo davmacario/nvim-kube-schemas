@@ -28,7 +28,9 @@ hover documentation and validation on your manifests.
 
 It detects the `apiVersion` and `kind` of the manifest you are editing and
 attaches the matching JSON schema to the `yamlls` client. There is no manual
-`yaml.schemas` wiring to maintain.
+`yaml.schemas` wiring to maintain. Files holding several documents separated
+by `---` are supported: each document is resolved on its own, and every schema
+found is attached to the buffer. See |nvim-kube-schemas-multi-doc|.
 
 Schemas are resolved from two community catalogs:
 
@@ -187,18 +189,38 @@ There is nothing to invoke. Open a Kubernetes manifest in a buffer where
 `yamlls` is attached, and the plugin resolves and attaches the schema in the
 background.
 
-On success it reports the schema it picked: >text
+On success it reports every schema it picked, one message per schema: >text
 
     Attached schema: Kubernetes schema for Deployment
     Attached schema: CRD schema for argoproj.io/application_v1alpha1.json
 <
-If the buffer has no top-level `apiVersion` and `kind`, or if no schema exists
-for the resource, the plugin reports this once and leaves `yamlls` on its
-default configuration: >text
+If no document in the buffer has a top-level `apiVersion` and `kind`, or if no
+schema exists for any of them, the plugin reports this once and leaves
+`yamlls` on its default configuration: >text
 
-No CRD or Kubernetes schema found. Falling back to default LSP configuration.
+No CRD or Kubernetes schema found for any document. Falling back to default
+LSP configuration.
 <
 Each buffer is inspected only once per session.
+
+MULTI-DOCUMENT FILES                             *nvim-kube-schemas-multi-doc*
+
+A buffer may hold several manifests separated by `---`, as produced by
+`kustomize build` or `helm template`. Each document is resolved independently,
+and every schema found is registered for the buffer, so completion, hover and
+validation work in all of them.
+
+A line is treated as a document separator when it is exactly `---`, or when it
+starts with `---` followed by whitespace. A Helm-style
+`--- # Source: chart/templates/service.yaml` therefore separates too, and
+trailing whitespace is ignored. An indented `---` does not separate, which
+keeps a YAML document embedded in a block scalar, such as a ConfigMap `data:`
+entry, in one piece.
+
+Documents with no top-level `apiVersion` and `kind`, such as a leading comment
+block or an empty document, are skipped without a message. Documents repeating
+an `apiVersion` and `kind` already seen in the same buffer are resolved only
+once, so a file with twenty Deployments fetches one schema.
 
 BUFFER VARIABLES                          *nvim-kube-schemas-buffer-variables*
 
@@ -207,7 +229,9 @@ by the plugin; you should not need to set them yourself, but they are useful
 when diagnosing why a buffer did or did not get a schema.
 
                                                           *b:schema_attached*
-    Set to `true` once a schema has been successfully attached to the buffer.
+    Set to `true` once at least one schema has been successfully attached to
+    the buffer. In a multi-document file it is set as soon as the first
+    document resolves, and says nothing about the remaining ones.
 
                                                            *b:schema_pending*
     Set to `true` while resolution is in flight, and to `false` when it
@@ -215,8 +239,12 @@ when diagnosing why a buffer did or did not get a schema.
     repeated |BufEnter| events.
 
                                                            *b:schema_checked*
-    Set to `true` when the buffer was inspected but had no usable top-level
-    `apiVersion` and `kind`. Prevents re-reporting the same miss.
+    Set to `true` once every document in the buffer has been inspected,
+    whether or not a schema was found for any of them. Prevents re-reporting
+    the same miss.
+
+    It is left unset when resolution fails partway through, so a buffer that
+    hit an error is retried on the next |BufEnter|.
 
 Resolution is skipped entirely while any of the three is set. Clearing the
 cache with |:NvimKubeSchemasClearCache| resets all three across every open
@@ -290,7 +318,12 @@ get_config() ~
      matching |nvim-kube-schemas-config-pattern|, and proceeds only if a
      client named `yamlls` is attached to the buffer.
 
-  2. The buffer is scanned for top-level `apiVersion:` and `kind:` keys.
+  2. The buffer is split into documents on `---` separator lines, and each
+     document is scanned for top-level `apiVersion:` and `kind:` keys. A
+     document without both is skipped. See |nvim-kube-schemas-multi-doc|.
+
+     Steps 3 to 5 then run once per distinct `apiVersion` and `kind` pair in
+     the buffer.
 
   3. The CRD catalog is tried first. The `apiVersion` and `kind` are
      normalized into a `<group>/<kind>_<version>.json` path, for example
@@ -304,6 +337,10 @@ get_config() ~
      registered in the `yaml.schemas` map of the running `yamlls` client,
      which is then notified with `workspace/didChangeConfiguration`. Schemas
      are always served to the language server from disk, never from a URL.
+
+     A multi-document buffer ends up with one entry per schema, each listing
+     the buffer's file name, and yaml-language-server applies the right one
+     to each document.
 
 All network work happens on a coroutine, so the editor is never blocked.
 

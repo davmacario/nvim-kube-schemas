@@ -13,10 +13,10 @@ Neovim plugin to automatically fetch and use YAML schemas for Kubernetes resourc
 - Falls back to the built-in Kubernetes resource schemas from [yannh/kubernetes-json-schema](https://github.com/yannh/kubernetes-json-schema).
 - Caches every schema on disk, so after the first fetch completion and validation work offline.
 - Remembers misses too, so unknown resources are not re-requested on every buffer.
+- Supports multi-doc YAMLs (i.e., containing multiple resources separated by `---`)
 
 Future improvements:
 
-- Add support for multi-doc YAMLs (i.e., containing multiple resources separated by `---`)
 - Refactor CRD and K8s resource logic to expose the same API. This allows to easily extend the plugin for extra sources.
 
 ## Installation

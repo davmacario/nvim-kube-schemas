@@ -100,11 +100,10 @@ M.setup_buffer = async.void(function(bufnr)
 
 			-- If not a k8s resource, skip current doc
 			if api_version and kind then
-				local crd = crds.match_crd(api_version, kind)
-
 				local curr_schema = api_version .. "/" .. kind
 
 				if seen_schemas[curr_schema] == nil then
+					local crd = crds.match_crd(api_version, kind)
 					-- Depending on whether CRD is known or not, either fetch CRD schema or K8s
 					-- resource schema
 					if crd then
